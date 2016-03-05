@@ -7,4 +7,4 @@ cat:
 	$(CC) -s cat.o -o cat
 
 clean:
-	rm *.o cat
+	rm -f *.o cat

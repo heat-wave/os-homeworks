@@ -8,31 +8,30 @@
 #include <errno.h>
 #include <stdio.h>
 
-int main(int argc, char *argv[]) {
-    char buf[256];
+void error_cat(const char *error_str)
+{
+    fprintf(stderr, "%s\n", error_str);
+    exit(1);
+}
 
-    for (int i = 1; i < argc; ++i) {
-        int fd = open(argv[i], O_RDONLY);
-        int count;
-        while (1) {
-            count = read(fd, buf, 256);
-            if (count >= 0) {
-                int res = write(STDOUT_FILENO, buf, count);
-                if (res == -1) {
-                    int errsv = errno;
-                    printf("Write returned error: %d", errsv);
-                    break;
-                }
-            } else {
-                int errsv = errno;
-                printf("Read returned error: %d", errsv);
-                break;
-            }
-            if (count == 0) {
-                break;
-            }
+int main() {
+
+    char buf[4096];
+    size_t read_count;
+
+    do {
+        read_count = (size_t) read(STDIN_FILENO, buf, sizeof(buf));
+        if (read_count == -1) {
+            error_cat(strerror(errno));
         }
 
-        close(fd);
-    }
+        size_t written_count = (size_t) write(STDOUT_FILENO, buf, read_count);
+
+        if (written_count < read_count) {
+            error_cat("Unexpected EOF");
+        }
+    } while (read_count == sizeof(buf));
+
+    return 0;
 }
+
