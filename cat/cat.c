@@ -30,7 +30,7 @@ int main() {
         if (written_count < read_count) {
             error_cat("Unexpected EOF");
         }
-    } while (read_count == sizeof(buf));
+    } while (read_count > 0);
 
     return 0;
 }

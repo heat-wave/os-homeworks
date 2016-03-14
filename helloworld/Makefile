@@ -13,4 +13,4 @@ libhello.so:
 	$(CC) -shared hello.o -o libhello.so
 
 clean:
-	rm *.o *.a *.so
+	rm -f *.o *.a *.so
