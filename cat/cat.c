@@ -7,6 +7,8 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 void error_cat(const char *error_str)
 {
@@ -14,24 +16,33 @@ void error_cat(const char *error_str)
     exit(1);
 }
 
-int main() {
+int main(int argc, char* argv[]) {
 
     char buf[4096];
     size_t read_count;
 
+    int fd;
+    fd = open(argv[1], O_RDONLY);
+
     do {
-        read_count = (size_t) read(STDIN_FILENO, buf, sizeof(buf));
-        if (read_count == -1) {
+        read_count = (size_t) read(fd, buf, sizeof(buf));
+        if (read_count == -1 && EINTR != errno) {
             error_cat(strerror(errno));
         }
 
-        size_t written_count = (size_t) write(STDOUT_FILENO, buf, read_count);
-
-        if (written_count < read_count) {
-            error_cat("Unexpected EOF");
+        int to_write = read_count;
+        int total_written = 0;
+        while (to_write > 0) {
+            size_t written_count = (size_t) write(STDOUT_FILENO, buf + total_written, to_write);
+            if (written_count == -1) {
+                error_cat("IO error");
+            }
+            total_written += written_count;
+            to_write -= written_count;
         }
-    } while (read_count > 0);
+    } while (read_count > 0 && EINTR == errno);
 
+    close(fd);
     return 0;
 }
 
