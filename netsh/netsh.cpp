@@ -7,55 +7,54 @@
 #include <errno.h>
 #include <stdio.h>
 #include <cstdlib>
+#include <netinet/in.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
 //error notification
-void error_netsh(const char *error_str)
-{
+void error_netsh(const char *error_str) {
     fprintf(stderr, "%s\n", error_str);
-    exit(1);
+    exit(EXIT_FAILURE);
 }
 
-//a routine used to write pid to file correctly
-size_t int_to_string(char *s, int x)
-{
-    //  Set pointer to current position.
-    char *p = s;
+void handle_socket(char* port) {
+    struct sockaddr_in address;
+    int socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (socket_fd == -1) {
+        error_netsh("Failed to create socket");
+    }
+    memset(&address, 0, sizeof(struct sockaddr_in));
+    int portno = atoi(port);
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = INADDR_ANY;
+    address.sin_port = htons(portno);
 
-    //  Set t to absolute value of x.
-    unsigned t = x;
-    if (x < 0) t = -t;
-
-    //  Write digits.
-    do {
-        *p++ = '0' + t % 10;
-        t /= 10;
-    } while (t);
-
-    //  If x is negative, write sign.
-    if (x < 0)
-        *p++ = '-';
-
-    //  Remember the return value, the number of characters written.
-    size_t r = p-s;
-
-    //  Since we wrote the characters in reverse order, reverse them.
-    while (s < --p) {
-        char t = *s;
-        *s++ = *p;
-        *p = t;
+    if (bind(socket_fd, (struct sockaddr *) &address,
+             sizeof(struct sockaddr)) == -1) {
+        error_netsh("Failed to bind socket");
     }
 
-    return r;
+    if (listen(socket_fd, 50) == -1) {
+        error_netsh("Failed to listen");
+    }
+    else {
+        printf("Listening");
+    }
 }
 
 //daemon?
 int main(int argc, char *argv[]) {
+    if (argc != 2) {
+        error_netsh("Wrong argument count!");
+    }
+
     pid_t first_fork_pid = fork();
 
     if (first_fork_pid == -1) {
         error_netsh("Failed to fork initially");
     } else if (first_fork_pid > 0) {
-        // do nothing
+        exit(0);
     } else {
         //this is the child that can proceed with daemonization
         pid_t new_session_pid = setsid();
@@ -69,17 +68,20 @@ int main(int argc, char *argv[]) {
             if (second_fork_pid == -1) {
                 error_netsh("Failed to fork after creating a new session");
             } else if (second_fork_pid > 0) {
-                //do nothing
+                exit(0);
             } else {
                 //daemonized successfully
                 pid_t daemon_pid = getpid();
                 int tmp_fd = open("/tmp/netsh.pid", O_WRONLY | O_CREAT);
                 char* buf = new char[64];
-                size_t digits = int_to_string(buf, (int)daemon_pid);
+                int digits = sprintf(buf, "%d\n", daemon_pid);
                 ssize_t written_count = write(tmp_fd, buf, digits);
                 if (written_count > 0) {
                     close(tmp_fd);
-                    //proceed with TCP listening
+                    handle_socket(argv[1]);
+                    do {
+                        //just wait?
+                    } while (1);
                 } else {
                     close(tmp_fd);
                     error_netsh("Failed to write pid to file");
