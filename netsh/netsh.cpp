@@ -12,6 +12,8 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <iostream>
+#include <fstream>
 
 //error notification
 void error_netsh(const char *error_str) {
@@ -41,39 +43,31 @@ void handle_socket(char* port) {
     }
 
     socklen_t client_len = sizeof(client_address);
-    int client_socket_fd = accept(socket_fd, (struct sockaddr *) &client_address, &client_len);
-    if (client_socket_fd == -1) {
-        error_netsh("Failed to accept");
-    }
-
-    char buffer [4096];
-    memset(&buffer, 0, sizeof(buffer));
-    size_t read_count = read(client_socket_fd, buffer, sizeof(buffer));
-    shutdown(client_socket_fd, SHUT_RD);
-    if (read_count == -1) {
-        error_netsh("Failed to read from socket");
-    }
-
-    pid_t parent = getpid();
-    pid_t pid = fork();
-
-    if (pid == -1) {
-        error_netsh("Failed to fork on input received");
-    } else if (pid > 0) {
-        //
-    } else {
-        //execlp(buffer, buffer);
-        //int test_fd = open("/tmp/test.out", O_WRONLY | O_CREAT);
-        size_t write_count = write(client_socket_fd, buffer, read_count);
-        //write_count = write(test_fd, buffer, read_count);
-
-        if (write_count == -1) {
-            error_netsh("Failed to write to socket");
+    while (1) {
+        int client_socket_fd = accept(socket_fd, (struct sockaddr *) &client_address, &client_len);
+        if (client_socket_fd == -1) {
+            error_netsh("Failed to accept");
         }
-        close(client_socket_fd);
-        close(socket_fd);
-        //close(test_fd);
-        exit(0);
+
+        char buffer[4096];
+        memset(&buffer, 0, sizeof(buffer));
+        size_t read_count = read(client_socket_fd, buffer, sizeof(buffer));
+        if (read_count == -1) {
+            error_netsh("Failed to read from socket");
+        }
+        std::string sequence(buffer);
+        //TODO: parse a complex command
+        char* str = const_cast<char*>(sequence.substr(0, read_count - 1).c_str());
+
+        pid_t pid = fork();
+
+        if (pid == -1) {
+            error_netsh("Failed to fork on input received");
+        } else if (pid > 0) {
+            //
+        } else {
+            execlp(str, str, NULL);
+        }
     }
 }
 
@@ -110,16 +104,15 @@ int main(int argc, char *argv[]) {
             char* buf = new char[64];
             int digits = sprintf(buf, "%d\n", daemon_pid);
             ssize_t written_count = write(tmp_fd, buf, digits);
-            if (written_count > 0) {
-                close(tmp_fd);
-                handle_socket(argv[1]);
-                do {
-                    //just wait?
-                } while (1);
-            } else {
+            if (written_count == -1) {
                 close(tmp_fd);
                 error_netsh("Failed to write pid to file");
             }
+            close(tmp_fd);
+            handle_socket(argv[1]);
+            do {
+                //just wait?
+            } while (1);
         }
     }
 }
