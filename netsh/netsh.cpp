@@ -26,6 +26,55 @@
 
 //TODO: optimize imports
 
+struct command
+{
+    const char **argv;
+};
+
+int spawn_proc(int in_fd, int out_fd, struct command *cmd) {
+
+    pid_t pid;
+
+    if ((pid = fork ()) == 0) {
+        if (in_fd != 0) {
+            dup2 (in_fd, 0);
+            close (in_fd);
+        }
+
+        if (out_fd != 1) {
+            dup2 (out_fd, 1);
+            close (out_fd);
+        }
+
+        return execvp (cmd->argv[0], (char * const *)cmd->argv);
+    }
+
+    return pid;
+}
+
+int fork_pipes(int n, int socket_fd, struct command *cmd) {
+
+    int i;
+    pid_t pid;
+    int in, fd[2];
+
+    in = 0;
+
+    for (i = 0; i < n - 1; ++i) {
+        pipe(fd);
+        spawn_proc(in, fd[1], cmd + i);
+        close(fd[1]);
+        in = fd[0];
+    }
+
+    if (in != 0)
+        dup2 (in, 0);
+    dup2(socket_fd, 1);
+
+    /* Execute the last stage with the current process. */
+    return execvp(cmd[i].argv[0], (char * const *)cmd[i].argv);
+}
+
 std::vector<std::string> insplit(const std::string &s, char delim, std::vector<std::string> &elems) {
     std::stringstream ss(s);
     std::string item;
@@ -200,7 +249,7 @@ int main(int argc, char *argv[]) {
 
             // Main loop learnt from an example on the internets
             while (1) {
-                int n, i, s;
+                int n, i;
 
                 n = epoll_wait (efd, events, MAXEVENTS, -1);
                 for (i = 0; i < n; i++) {
@@ -226,8 +275,7 @@ int main(int argc, char *argv[]) {
 
                             in_len = sizeof in_addr;
                             infd = accept (sfd, &in_addr, &in_len);
-                            if (infd == -1)
-                            {
+                            if (infd == -1) {
                                 if ((errno == EAGAIN) ||
                                     (errno == EWOULDBLOCK)) {
                                     /* We have processed all incoming
@@ -235,18 +283,9 @@ int main(int argc, char *argv[]) {
                                     break;
                                 }
                                 else {
-                                    perror ("accept");
+                                    perror ("Failed to accept");
                                     break;
                                 }
-                            }
-
-                            s = getnameinfo (&in_addr, in_len,
-                                             hbuf, sizeof hbuf,
-                                             sbuf, sizeof sbuf,
-                                             NI_NUMERICHOST | NI_NUMERICSERV);
-                            if (s == 0) {
-                                printf("Accepted connection on descriptor %d "
-                                               "(host=%s, port=%s)\n", infd, hbuf, sbuf);
                             }
 
                             /* Make the incoming socket non-blocking and add it to the
@@ -291,29 +330,27 @@ int main(int argc, char *argv[]) {
                                 break;
                             }
 
-                            std::string sequence(buf);
-                            //TODO: parse a complex command
-                            char* str = const_cast<char*>(sequence.substr(0, count - 1).c_str());
-
                             pid_t pid = fork();
 
                             if (pid == -1) {
                                 error_netsh("Failed to fork on input received");
                             } else if (pid > 0) {
-                                /* Write the buffer to standard output
-                                 * solely for testing purposes */
-                                if (write (1, buf, count) == -1) {
-                                    error_netsh("Failed to write");
-                                }
+                                // Do nothing
                             } else {
-                                execlp(str, str, NULL);
+                                //TODO: parse a complex command
+                                // this is for testing purposes
+                                const char *ls[] = { "ls", "-l", 0 };
+                                const char *awk[] = { "awk", "{print $1}", 0 };
+                                const char *sort[] = { "sort", 0 };
+                                const char *uniq[] = { "uniq", 0 };
+
+                                struct command cmd [] = { {ls}, {awk}, {sort}, {uniq} };
+
+                                fork_pipes (1, events[i].data.fd, cmd);
                             }
                         }
 
                         if (done) {
-                            printf ("Closed connection on descriptor %d\n",
-                                    events[i].data.fd);
-
                             /* Closing the descriptor will make epoll remove it
                                from the set of descriptors which are monitored. */
                             close (events[i].data.fd);
