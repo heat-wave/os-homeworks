@@ -5,7 +5,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <errno.h>
 #include <stdio.h>
 #include <cstdlib>
 #include <netinet/in.h>
@@ -272,7 +271,6 @@ int main(int argc, char *argv[]) {
                             int last_space_pos = 0;
 
                             count = read(events[i].data.fd, buf, sizeof buf);
-                            printf("%d\n", count);
                             if (count == -1) {
                                 /* If errno == EAGAIN, that means we have read all
                                    data. So go back to the main loop. */
@@ -325,10 +323,7 @@ int main(int argc, char *argv[]) {
 
                         if (pid == -1) {
                             error_netsh("Failed to fork on input received");
-                        } else if (pid > 0) {
-                            // Do nothing
-                        } else {
-                            printf("%d\n", commands.size());
+                        } else if (pid == 0) {
                             fork_pipes (commands.size(), events[i].data.fd, &commands[0]);
                         }
 
