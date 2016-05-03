@@ -17,9 +17,10 @@ cur_pid = -1
 
 process_list = []
 file_table = []
-pipe_ends = dict()
-pipe_buffers = dict()
-
+pipe_ends = []
+pipe_buffers = []
+blocked_process_list = []
+last_contexts = []
 per_process_fdtables = [dict()]
 
 
@@ -44,12 +45,19 @@ def close(fildes):
 
 def read(fildes, buffer, count):
     global cur_pid
-    if fildes in pipe_ends.keys():
+    if fildes in list(pipe_ends.keys()):
         offset = 0
-        pipe_buf = pipe_buffers[fildes]
+        pipe_buf = pipe_buffers[cur_pid][fildes]
         while pipe_buf[offset] is not None:
             buffer[offset] = pipe_buf[offset]
             pipe_buf[offset] = None
+            offset += 1
+        if offset > 0:
+            for context in blocked_process_list:
+                if context[0] == SystemCall.WRITE and context[1][0] in pipe_buffers[cur_pid]:
+                    blocked_process_list.remove(context)
+                    process_list.append(context[2])
+
         return offset
 
     else:
@@ -65,9 +73,9 @@ def read(fildes, buffer, count):
 def write(fildes, buffer, count):
     global cur_pid
     if fildes in pipe_ends.values():
-        pipe_buf = pipe_buffers[list(pipe_ends.keys())[list(pipe_ends.values()).index(fildes)]]
-        while pipe_buf[len(pipe_buf) - 1] is not None:
-            pass  # block here
+        pipe_buf = pipe_buffers[cur_pid][list(pipe_ends.keys())[list(pipe_ends.values()).index(fildes)]]
+        if pipe_buf[len(pipe_buf) - 1] is not None:
+            blocked_process_list.append(last_context)
         offset = len(pipe_buf) - 1
         while offset > 0 and pipe_buf[offset] is not None:
             offset -= 1
@@ -86,6 +94,7 @@ def write(fildes, buffer, count):
 
 def dup2(from_fd, to_fd):
     global cur_pid
+    close(to_fd)
     per_process_fdtables[cur_pid][to_fd] = per_process_fdtables[cur_pid][from_fd]
     return to_fd
 
@@ -99,8 +108,8 @@ def pipe():
     out_end = in_end + 1
     per_process_fdtables[cur_pid][in_end] = -1
     per_process_fdtables[cur_pid][out_end] = -1
-    pipe_ends[in_end] = out_end
-    pipe_buffers[in_end] = [None] * 16
+    pipe_ends[cur_pid][in_end] = out_end
+    pipe_buffers[cur_pid][in_end] = [None] * 16
     return in_end, out_end
 
 
@@ -110,12 +119,15 @@ def kill(pid):
     return 0
 
 
-def kernel(program, args, stdin):
+def kernel(program, args):
     global pid_count
     global cur_pid
     pid_count += 1
     pid = pid_count
     per_process_fdtables.append(dict())
+    pipe_ends.append(dict())
+    pipe_buffers.append([None] * 16)
+    last_contexts.append([])
 
     process_list.append((program, args, pid))
 
@@ -124,6 +136,7 @@ def kernel(program, args, stdin):
         (next_process, next_args, next_pid) = process_list.pop()
         cur_pid = next_pid
         (sys_call, args, cont) = next_process(*next_args)
+        last_contexts[cur_pid] = (sys_call, args, (next_process, next_args, next_pid))
 
         if sys_call == SystemCall.READ:
             read_result = read(*args)
@@ -155,9 +168,12 @@ def kernel(program, args, stdin):
 
         elif sys_call == SystemCall.FORK:
             pid_count += 1
-            process_list.append((cont, [cur_pid], cur_pid))
+            process_list.append((cont, [pid_count], cur_pid))
             process_list.append((cont, [0], pid_count))
             per_process_fdtables.append(dict())  # imagine that we put stdin/stdout/stderr abstractions here
+            pipe_buffers.append([None] * 16)
+            last_contexts.append([])
+            pipe_ends.append(dict())
 
         elif sys_call == SystemCall.EXIT:
             for fildes in list(per_process_fdtables[cur_pid].keys()):
