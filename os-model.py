@@ -20,7 +20,7 @@ file_table = []
 pipe_ends = dict()
 pipe_buffers = dict()
 
-per_process_fdtables = [dict() for i in range(2)]
+per_process_fdtables = [dict()]
 
 
 def open_fd(path, mode):
@@ -115,7 +115,7 @@ def kernel(program, args, stdin):
     global cur_pid
     pid_count += 1
     pid = pid_count
-    per_process_fdtables[pid] = dict()
+    per_process_fdtables.append(dict())
 
     process_list.append((program, args, pid))
 
@@ -180,10 +180,17 @@ def open_file_2(read_count):
     print(''.join(buf[:read_count]))
     return SystemCall.EXIT, [0], None
 
+
 def call_pipe_0():
     return SystemCall.PIPE, [], call_pipe_1
 
-def call_pipe_1():
+
+def call_pipe_1(pipe):
+    return SystemCall.CLOSE, [pipe[0]], call_pipe_2
+
+
+def call_pipe_2(result):
     return SystemCall.EXIT, [0], None
 
+kernel(call_pipe_0, [], [])
 kernel(call_pipe_0, [], [])
