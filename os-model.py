@@ -9,6 +9,8 @@ class SystemCall(Enum):
     EXIT = "exit"
     KILL = "kill"
     FORK = "fork"
+    PIPE = "pipe"
+    DUP2 = "dup2"
 
 pid_count = 0
 cur_pid = -1
@@ -84,7 +86,8 @@ def write(fildes, buffer, count):
 
 def dup2(from_fd, to_fd):
     global cur_pid
-    per_process_fdtables[cur_pid][from_fd] = per_process_fdtables[cur_pid][to_fd]
+    per_process_fdtables[cur_pid][to_fd] = per_process_fdtables[cur_pid][from_fd]
+    return to_fd
 
 
 def pipe():
@@ -108,7 +111,6 @@ def kill(pid):
 
 
 def kernel(program, args, stdin):
-    print("Running process {} with args={}, stdin={}".format(program, args, stdin))
     global pid_count
     global cur_pid
     pid_count += 1
@@ -139,6 +141,14 @@ def kernel(program, args, stdin):
             close_result = close(args[0])
             process_list.append((cont, [close_result], next_pid))
 
+        elif sys_call == SystemCall.DUP2:
+            dup2_result = dup2(*args)
+            process_list.append((cont, [dup2_result], next_pid))
+
+        elif sys_call == SystemCall.PIPE:
+            pipe_result = pipe()
+            process_list.append((cont, [pipe_result], next_pid))
+
         elif sys_call == SystemCall.KILL:
             kill_result = kill(args[0])
             process_list.append((cont, [kill_result], next_pid))
@@ -152,7 +162,6 @@ def kernel(program, args, stdin):
         elif sys_call == SystemCall.EXIT:
             for fildes in list(per_process_fdtables[cur_pid].keys()):
                 close(fildes)
-            print("Exit code: {}".format(args[0]))
 
         else:
             print("ERROR: no such system call")
@@ -171,4 +180,10 @@ def open_file_2(read_count):
     print(''.join(buf[:read_count]))
     return SystemCall.EXIT, [0], None
 
-kernel(open_file_0, [], [])
+def call_pipe_0():
+    return SystemCall.PIPE, [], call_pipe_1
+
+def call_pipe_1():
+    return SystemCall.EXIT, [0], None
+
+kernel(call_pipe_0, [], [])
