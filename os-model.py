@@ -18,7 +18,7 @@ The code below might contain an arbitrary number of errors; they are, however,
 tiny and easy to fix in case you need a fully working model of kernel. It is already
 operational, but IPC and piping are not properly tested, thereby not guaranteed.
 
-DISCLAIMER: Because of timing restrictions, the code hasn't been cleaned up or
+DISCLAIMER: Due to timing restrictions, the code hasn't been cleaned up or
     refactored. Excessive use of global variables is heavily discouraged, as is
     ambiguous behaviour or type structure. Please do not repeat this.
 
@@ -134,7 +134,7 @@ def close(fildes):
 
 
 '''
-Writes up to `count` bytes to `buffer` from
+Reads up to `count` bytes to `buffer` from
 whatever `fildes` is pointing to
 
 Parameters:
