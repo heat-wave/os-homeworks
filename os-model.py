@@ -12,9 +12,64 @@ class SystemCall(Enum):
     PIPE = "pipe"
     DUP2 = "dup2"
 
+
+'''
+The code below might contain an arbitrary number of errors; they are, however,
+tiny and easy to fix in case you need a fully working model of kernel. It is already
+operational, but IPC and piping are not properly tested, thereby not guaranteed.
+
+DISCLAIMER: Because of timing restrictions, the code hasn't been cleaned up or
+    refactored. Excessive use of global variables is heavily discouraged, as is
+    ambiguous behaviour or type structure. Please do not repeat this.
+
+Based on A.Komarov & J.Pjankova's kernel model:
+[http://neerc.ifmo.ru/~os/static/model.py]
+
+The file system model is as follows:
+- each process has its own file descriptor table
+- each file descriptor is a small, nonnegative integer
+ that maps into an entry in the global file table
+- file table entries contain links to the corresponding
+ inodes and other relevant information about the file
+- inodes are here considered magically given and wrapped
+ for us for simplicity's sake
+
+How processes are handled here:
+- starting process has PID 1
+- fork syscall forks current process, so
+ the child has PID = max(previous PIDs) + 1
+- different processes have different std/stdout/stderr
+ and file descriptor table, as well as helper structures
+- kill sends a termination signal to all processes with
+ the specified PID, removing them from the stack completely
+- exit ends the process gracefully, allowing it to free
+ resources such as file descriptors and do something on exit
+
+How kernel works in short:
+- regular code is broken into almost-atomic pieces which contain
+ a system call, the arguments to execute it with, and a reference
+ to the piece that will follow
+- when the piece is popped off the stack, its system call is executed,
+ and the new piece is pushed onto the stack
+- this process repeats until the stack is completely empty, meaning
+ that the program has finished working and no longer makes system calls
+'''
+
 pid_count = 0
 cur_pid = -1
 
+'''
+This is a reference table in case you get stuck in Python's type system
+
+ per_process_fdtables: PID -> (Map: Int (index in fd table) -> Int (index in file table))
+ file_table:           Int (index) -> FileInfo
+ FileInfo:             Tuple: IOWrapper (inode abstraction), String (mode), Int (offset in seekable file)
+ pipe_ends:            PID -> (Map: Int (write end) -> Int (read end))
+ blocked_process_list: PID -> List[Context]
+ Context:              Tuple: SystemCall syscall, List args, Process next
+ Process:              Tuple: Function toExecute, List args, PID pid
+ PID:                  Int
+'''
 process_list = []
 file_table = []
 pipe_ends = []
@@ -24,6 +79,25 @@ last_contexts = []
 per_process_fdtables = [dict()]
 
 
+'''
+Opens the file at the specified path with given mode
+ (read/write/both), creating an open file description
+ if there wasn't one for that file
+
+Parameters:
+__________
+path: string
+    system-specific file path
+mode: string
+    "r", "w", or "rw"
+
+Returns:
+__________
+fildes: int
+    file descriptor that for this process maps into
+    an entry in the file table (one for all processes)
+    corresponding to the file
+'''
 def open_fd(path, mode):
     global cur_pid
     if len(per_process_fdtables[cur_pid]) > 0:
@@ -36,13 +110,47 @@ def open_fd(path, mode):
     return fildes
 
 
+'''
+Closes the specified file descriptor,
+freeing any resources that become
+useless in the process
+
+Parameters:
+__________
+fildes: int
+    file descriptor to close
+
+Returns:
+__________
+res: int
+    success/error code
+'''
 def close(fildes):
     global cur_pid
     del per_process_fdtables[cur_pid][fildes]
     return 0
-    # free resources?
+    # here we also free any open file descriptions that
+    # no one is referring to. Feel free to implement
 
 
+'''
+Writes up to `count` bytes to `buffer` from
+whatever `fildes` is pointing to
+
+Parameters:
+__________
+fildes: int
+    file descriptor to read from
+buffer: list
+    byte array to read to
+count: int
+    number of bytes to read
+
+Returns:
+__________
+res: int
+    number of bytes actually read
+'''
 def read(fildes, buffer, count):
     global cur_pid
     if fildes in list(pipe_ends.keys()):
@@ -70,12 +178,30 @@ def read(fildes, buffer, count):
         return len(result)
 
 
+'''
+Writes up to `count` bytes from `buffer` to
+whatever `fildes` is pointing to
+
+Parameters:
+__________
+fildes: int
+    receiving file descriptor
+buffer: list
+    byte array to write from
+count: int
+    number of bytes to write
+
+Returns:
+__________
+res: int
+    number of bytes actually written
+'''
 def write(fildes, buffer, count):
     global cur_pid
     if fildes in pipe_ends.values():
         pipe_buf = pipe_buffers[cur_pid][list(pipe_ends.keys())[list(pipe_ends.values()).index(fildes)]]
         if pipe_buf[len(pipe_buf) - 1] is not None:
-            blocked_process_list.append(last_context)
+            blocked_process_list.append(last_contexts[cur_pid])
         offset = len(pipe_buf) - 1
         while offset > 0 and pipe_buf[offset] is not None:
             offset -= 1
@@ -92,6 +218,24 @@ def write(fildes, buffer, count):
         return result
 
 
+'''
+Makes the file descriptor `to_fd` refer to the
+same open file description as `from_fd`
+Closes `to_fd` before redirecting it to avoid
+resource leaks
+
+Parameters:
+__________
+from_fd: int
+    the file descriptor where `to_fd` should point
+to_fd: int
+    the file descriptor to modify
+
+Returns:
+__________
+to_fd: int
+    the modified file descriptor
+'''
 def dup2(from_fd, to_fd):
     global cur_pid
     close(to_fd)
@@ -99,12 +243,28 @@ def dup2(from_fd, to_fd):
     return to_fd
 
 
+'''
+Creates a pipe (a unidirectional data channel that
+ can be used for interprocess communication)
+ Data written to the write end of pipe is buffered
+ until it is read from the read end of the pipe
+
+Parameters:
+__________
+
+Returns:
+__________
+in_end: int
+    file descriptor referring to the write end of the pipe
+out_end: int
+    file descriptor referring to the read end of the pipe
+'''
 def pipe():
     global cur_pid
     if len(per_process_fdtables[cur_pid]) > 0:
         in_end = max(per_process_fdtables[cur_pid]) + 1
     else:
-        in_end = 3
+        in_end = 3  # again, stdin/stdout/stderr go first
     out_end = in_end + 1
     per_process_fdtables[cur_pid][in_end] = -1
     per_process_fdtables[cur_pid][out_end] = -1
@@ -113,12 +273,40 @@ def pipe():
     return in_end, out_end
 
 
+'''
+Simply put, sends a kill signal to the process with
+the specified process ID
+
+Parameters:
+__________
+pid: int
+    process ID whose instances should be terminated
+
+Returns:
+__________
+code: int
+    success or error code
+'''
 def kill(pid):
     global process_list
     process_list = list(filter(lambda x: x[2] != pid, process_list))
     return 0
 
 
+'''
+Runs a program with its arguments, managing security,
+process and resource isolation, necessary abstractions, etc.
+
+Parameters:
+__________
+program: function
+    the program to be executed
+args: list
+    the parameters for the program
+
+Returns:
+__________
+'''
 def kernel(program, args):
     global pid_count
     global cur_pid
@@ -183,6 +371,9 @@ def kernel(program, args):
             print("ERROR: no such system call")
 
 
+'''
+Examples of use are below
+
 buf = [None] * 200
 def open_file_0():
     return SystemCall.OPEN, ["/home/heat_wave/.bashrc", "r"], open_file_1
@@ -210,3 +401,4 @@ def call_pipe_2(result):
 
 kernel(call_pipe_0, [], [])
 kernel(call_pipe_0, [], [])
+'''
