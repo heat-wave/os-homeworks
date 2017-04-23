@@ -129,7 +129,7 @@ def close(fildes):
     global cur_pid
     del per_process_fdtables[cur_pid][fildes]
     return 0
-    # here we also free any open file descriptions that
+    # here we also free any open file descriptors that
     # no one is referring to. Feel free to implement
 
 
